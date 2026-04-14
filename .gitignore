@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.coverage
+.mutmut-cache
+.idea/
+*.egg-info/
+.pytest_cache/
