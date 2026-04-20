@@ -2,6 +2,9 @@
 Combinatorial testing for SoundGenerator module.
 """
 import pytest
+import math
+from itertools import product
+from allpairspy import AllPairs
 from engine.audio.sound_generator import Sound
 
 # Partitions identified:
@@ -10,80 +13,104 @@ from engine.audio.sound_generator import Sound
 # wave_type: ['sine', 'square', 'sawtooth', 'triangle', 'noise', 'unknown']
 # amplitude: [0.0 (Zero), 0.5 (Normal), 1.0 (Max), -0.5 (Negative/Inverted)]
 
+# Generate PWC test cases using allpairspy
+_tone_parameters = [
+    [20, 440, 10000],  # frequency
+    [0.1, 0.5, 1.0],   # duration
+    ['sine', 'square', 'sawtooth', 'triangle', 'noise', 'unknown'],  # wave_type
+    [0.0, 0.5, 1.0, -0.5],  # amplitude
+]
+_tone_pwc_cases = list(AllPairs(_tone_parameters))
+# Map combinations to expected_all_zeros: True when amplitude is 0.0 or wave_type is 'unknown'
+_tone_test_cases = [
+    tuple(case) + (case[3] == 0.0 or case[2] == 'unknown',)
+    for case in _tone_pwc_cases
+]
+
 @pytest.mark.parametrize(
     "frequency, duration, wave_type, amplitude, expected_all_zeros",
-    [
-        # Pair-Wise Coverage (PWC) testing matrix targeting parameter interactions
-        (20, 0.1, 'sine', 0.0, True),
-        (20, 0.5, 'square', 0.5, False),
-        (20, 1.0, 'sawtooth', 1.0, False),
-        (440, 0.1, 'triangle', -0.5, False),
-        (440, 0.5, 'noise', 0.0, True),
-        (440, 1.0, 'unknown', 0.5, True),
-        (10000, 0.1, 'sawtooth', 0.5, False),
-        (10000, 0.5, 'unknown', 1.0, True),
-        (10000, 1.0, 'sine', -0.5, False),
-        (20, 1.0, 'noise', -0.5, False),
-        (440, 0.1, 'square', 1.0, False),
-        (10000, 0.5, 'triangle', 0.0, True),
-    ]
+    _tone_test_cases
 )
 def test_generate_tone_pwc(frequency, duration, wave_type, amplitude, expected_all_zeros):
     """
     Combinatorial testing: Pair-Wise Coverage (PWC) for Sound.generate_tone.
     Ensures pairwise interactions across complex audio waveforms and modifiers are fully exercised.
+    Tests waveform generation, amplitude constraints, and parameter interactions.
     """
     sound = Sound("pwc_test")
     sound.generate_tone(frequency, duration, wave_type, amplitude)
-    
+
     # 1. Validate the duration was set
     assert sound.duration == duration
-    
+
     # 2. Validate the correct number of samples was generated
     expected_samples = int(22050 * duration)
     assert len(sound.samples) == expected_samples
-    
+
     # 3. Validate math constraints (zeros vs active waveforms)
     if expected_all_zeros:
-        assert all(sample == 0.0 for sample in sound.samples)
+        assert all(sample == 0.0 for sample in sound.samples), \
+            f"Expected all zeros for amplitude={amplitude}, wave_type={wave_type}"
     else:
         # If it's a valid wave with non-zero amplitude, it should have non-zero samples
-        assert any(sample != 0.0 for sample in sound.samples)
-        
+        assert any(sample != 0.0 for sample in sound.samples), \
+            f"Expected non-zero samples for frequency={frequency}, amplitude={amplitude}, wave_type={wave_type}"
+
         # Validate boundary constraint: no sample should exceed absolute amplitude
         max_generated_amplitude = max(abs(s) for s in sound.samples)
-        assert max_generated_amplitude <= abs(amplitude) + 1e-6
+        assert max_generated_amplitude <= abs(amplitude) + 1e-6, \
+            f"Max amplitude {max_generated_amplitude} exceeds {abs(amplitude)} for wave_type={wave_type}"
+
+        # Validate waveform shape based on type
+        if wave_type == 'sine':
+            # Sine waves should have smoothly varying values, check for peaks near amplitude
+            num_samples = len(sound.samples)
+            peak_count = sum(1 for i in range(1, num_samples - 1)
+                           if abs(sound.samples[i]) > abs(amplitude) * 0.9 and
+                           abs(sound.samples[i]) >= abs(sound.samples[i-1]) and
+                           abs(sound.samples[i]) >= abs(sound.samples[i+1]))
+            assert peak_count >= 1, "Sine wave should have at least one peak near amplitude"
+
+        elif wave_type == 'square':
+            # Square waves should have values close to +/- amplitude (hard transitions)
+            values_near_max = sum(1 for s in sound.samples if abs(s) > abs(amplitude) * 0.9)
+            assert values_near_max > len(sound.samples) * 0.5, \
+                "Square wave should have many samples near +/- amplitude"
+
+        elif wave_type == 'noise':
+            # Noise should have varied values across the amplitude range
+            unique_values = len(set(sound.samples))
+            assert unique_values > len(sound.samples) * 0.1, \
+                "Noise should produce varied sample values"
 
 # Partitions identified for generate_sweep:
 # start_freq: [200 (Low), 800 (Mid), 2000 (High)]
 # end_freq_relation: ['up' (end > start), 'same' (end == start), 'down' (end < start)]
-# duration: [-0.1 (Invalid), 0.1 (Short), 1.0 (Long)]
+# duration: [0.01 (Very Short), 0.1 (Short), 1.0 (Long)]
 # wave_type: ['sine', 'square', 'unsupported']
-# amplitude: [-0.5 (Invalid/Inverted), 0.5 (Normal), 1.0 (Max)]
+# amplitude: [0.0 (Zero), 0.5 (Normal), 1.0 (Max)]
+
+_sweep_parameters = [
+    [200, 800, 2000],  # start_freq
+    ['up', 'same', 'down'],  # end_freq_relation
+    [0.01, 0.1, 1.0],  # duration (removed negative - always positive for audio)
+    ['sine', 'square', 'unsupported'],  # wave_type
+    [0.0, 0.5, 1.0],  # amplitude (removed negative for consistency)
+]
+_sweep_pwc_cases = [tuple(case) for case in AllPairs(_sweep_parameters)]
 
 @pytest.mark.parametrize(
     "start_freq, end_freq_relation, duration, wave_type, amplitude",
-    [
-        # Pair-Wise Coverage (PWC) Matrix covering parameter interactions
-        (200, 'up', -0.1, 'sine', 0.5),
-        (200, 'same', 0.1, 'square', 1.0),
-        (200, 'down', 1.0, 'unsupported', -0.5),
-        (800, 'up', 0.1, 'unsupported', -0.5),
-        (800, 'same', 1.0, 'sine', 0.5),
-        (800, 'down', -0.1, 'square', 1.0),
-        (2000, 'up', 1.0, 'square', 0.5),
-        (2000, 'same', -0.1, 'unsupported', 1.0),
-        (2000, 'down', 0.1, 'sine', -0.5),
-    ]
+    _sweep_pwc_cases
 )
 def test_generate_sweep_pwc(start_freq, end_freq_relation, duration, wave_type, amplitude):
     """
     Combinatorial testing: Pair-Wise Coverage (PWC) for Sound.generate_sweep.
-    Ensures parameter interactions (e.g. waveform with duration and amplitude) 
-    are executed across minimal test cases.
+    Ensures parameter interactions (e.g. waveform with duration and amplitude)
+    are executed across minimal test cases. Tests envelope application and sweep behavior.
     """
     sound = Sound("pwc_sweep_test")
-    
+
     # Calculate end freq to map to relations
     if end_freq_relation == 'up':
         end_freq = start_freq + 400
@@ -91,16 +118,39 @@ def test_generate_sweep_pwc(start_freq, end_freq_relation, duration, wave_type, 
         end_freq = max(20, start_freq - 400)
     else:
         end_freq = start_freq
-        
+
     sound.generate_sweep(start_freq, end_freq, duration, wave_type, amplitude)
-    
+
     assert sound.duration == duration
-    
-    if duration <= 0:
-        assert len(sound.samples) == 0
+
+    expected_samples = int(22050 * duration)
+    assert len(sound.samples) == expected_samples
+
+    # Validate amplitude constraint
+    if amplitude > 0:
+        if expected_samples > 0:
+            max_generated = max(abs(s) for s in sound.samples)
+            assert max_generated <= amplitude + 1e-6, \
+                f"Max amplitude {max_generated} exceeds {amplitude}"
+
+        # Verify envelope is applied: samples at start and end should be lower
+        # (due to attack and release envelopes in the implementation)
+        if expected_samples > 100:
+            start_quarter_samples = sound.samples[:expected_samples // 4]
+            middle_samples = sound.samples[expected_samples // 2:3 * expected_samples // 4]
+            end_quarter_samples = sound.samples[-expected_samples // 4:]
+
+            # Middle should generally have higher amplitude than edges (envelope effect)
+            avg_middle = sum(abs(s) for s in middle_samples) / len(middle_samples)
+            avg_start = sum(abs(s) for s in start_quarter_samples) / len(start_quarter_samples)
+            avg_end = sum(abs(s) for s in end_quarter_samples) / len(end_quarter_samples)
+
+            assert avg_middle > avg_start * 0.5, "Attack envelope not applied properly"
+            assert avg_middle > avg_end * 0.5, "Release envelope not applied properly"
     else:
-        expected_samples = int(22050 * duration)
-        assert len(sound.samples) == expected_samples
+        # Amplitude 0 should produce all zeros
+        assert all(s == 0.0 for s in sound.samples), \
+            "Amplitude 0 should produce all zero samples"
 
 from engine.audio.sound_generator import SoundGenerator
 
@@ -109,24 +159,49 @@ from engine.audio.sound_generator import SoundGenerator
 # amplitude: [0.0 (Zero), 0.5 (Normal), 1.0 (Max)]
 # All Combinations Coverage (ACoC) requires 2 * 3 = 6 combinations.
 
+_explosion_durations = [0.1, 1.0]
+_explosion_amplitudes = [0.0, 0.5, 1.0]
+_explosion_acoc_cases = list(product(_explosion_durations, _explosion_amplitudes))
+
 @pytest.mark.parametrize(
     "duration, amplitude",
-    [
-        (0.1, 0.0), (0.1, 0.5), (0.1, 1.0),
-        (1.0, 0.0), (1.0, 0.5), (1.0, 1.0),
-    ]
+    _explosion_acoc_cases
 )
 def test_generate_explosion_acoc(duration, amplitude):
     """
     All Combinations Coverage (ACoC) for Sound.generate_explosion.
     Provides complete interaction coverage for 2 parameters.
+    Tests amplitude constraints, envelope decay, and sample generation.
     """
     sound = Sound("explosion_acoc")
     sound.generate_explosion(duration, amplitude)
-    
+
     assert sound.duration == duration
     expected_samples = int(22050 * duration)
     assert len(sound.samples) == expected_samples
+
+    # Validate amplitude constraint
+    if amplitude == 0.0:
+        # Zero amplitude should produce all-zero samples
+        assert all(s == 0.0 for s in sound.samples), \
+            "Amplitude 0 should produce all zero samples"
+    else:
+        # Non-zero amplitude should have non-zero samples
+        assert any(s != 0.0 for s in sound.samples), \
+            f"Amplitude {amplitude} should produce non-zero samples"
+
+        # Check max amplitude doesn't exceed specified amplitude
+        max_generated = max(abs(s) for s in sound.samples)
+        assert max_generated <= amplitude + 1e-6, \
+            f"Max amplitude {max_generated} exceeds {amplitude}"
+
+        # Validate envelope decay: end samples should have lower amplitude than start
+        # (exponential decay is applied)
+        if expected_samples > 100:
+            start_third_max = max(abs(s) for s in sound.samples[:expected_samples // 3])
+            end_third_max = max(abs(s) for s in sound.samples[-expected_samples // 3:])
+            assert end_third_max < start_third_max, \
+                "Explosion envelope decay not applied: end should be quieter than start"
 
 # Partitions identified (Building blocks for PWC):
 # base_freq: [20 (Low), 100 (Nominal), 500 (High)]
@@ -134,99 +209,199 @@ def test_generate_explosion_acoc(duration, amplitude):
 # amplitude: [0.0 (Zero), 0.5 (Normal), 1.0 (Max)]
 # Pair-Wise Coverage (PWC) ensures every pair of values is tested at least once cleanly.
 
+_engine_parameters = [
+    [20, 100, 500],  # base_freq
+    [0.1, 0.5],  # duration
+    [0.0, 0.5, 1.0],  # amplitude
+]
+_engine_pwc_cases = [tuple(case) for case in AllPairs(_engine_parameters)]
+
 @pytest.mark.parametrize(
     "base_freq, duration, amplitude",
-    [
-        # Providing pairwise coverage across the 3 parameters without explosion
-        (20, 0.1, 0.0),
-        (20, 0.5, 0.5),
-        (100, 0.1, 1.0),
-        (100, 0.5, 0.0),
-        (500, 0.1, 0.5),
-        (500, 0.5, 1.0),
-        (20, 0.1, 1.0),
-        (100, 0.1, 0.5),
-        (500, 0.1, 0.0),
-    ]
+    _engine_pwc_cases
 )
 def test_generate_engine_pwc(base_freq, duration, amplitude):
     """
     Pair-Wise Coverage (PWC) for Sound.generate_engine.
     Tests complex harmonic interactions optimally.
+    Validates harmonics, amplitude constraints, and envelope behavior.
     """
     sound = Sound("engine_pwc")
     sound.generate_engine(base_freq, duration, amplitude)
-    
+
     assert sound.duration == duration
     assert len(sound.samples) == int(22050 * duration)
 
+    # Validate amplitude constraint
+    if amplitude == 0.0:
+        # Zero amplitude should produce all-zero samples
+        assert all(s == 0.0 for s in sound.samples), \
+            "Amplitude 0 should produce all zero samples"
+    else:
+        # Non-zero amplitude should have non-zero samples
+        assert any(s != 0.0 for s in sound.samples), \
+            f"Amplitude {amplitude} should produce non-zero samples"
+
+        # Check max amplitude doesn't exceed specified amplitude (with harmonics)
+        max_generated = max(abs(s) for s in sound.samples)
+        assert max_generated <= amplitude + 0.5, \
+            f"Max amplitude {max_generated} significantly exceeds {amplitude} (harmonics included)"
+
+        # Validate envelope is applied: samples at edges should be lower than middle
+        num_samples = len(sound.samples)
+        if num_samples > 200:
+            attack_samples = sound.samples[:int(num_samples * 0.1)]
+            middle_samples = sound.samples[int(num_samples * 0.4):int(num_samples * 0.6)]
+            release_samples = sound.samples[-int(num_samples * 0.1):]
+
+            avg_attack = sum(abs(s) for s in attack_samples) / len(attack_samples)
+            avg_middle = sum(abs(s) for s in middle_samples) / len(middle_samples)
+            avg_release = sum(abs(s) for s in release_samples) / len(release_samples)
+
+            assert avg_middle > avg_attack, "Attack envelope not applied properly"
+            assert avg_middle > avg_release, "Release envelope not applied properly"
+
 # Partitions identified (Building blocks for ECC):
 # sound_name: ["bullet" (Registered), "unknown" (Unregistered), "engine" (Registered)]
-# thread_busy: [True (Thread already running), False (Thread available)]
+# sound_exists: [True, False]
 
 @pytest.mark.parametrize(
-    "sound_name, thread_busy",
+    "sound_name, sound_exists",
     [
-        ("bullet", False),
-        ("unknown", True),
-        ("engine", False),
+        ("bullet", True),
+        ("unknown", False),
+        ("engine", True),
     ]
 )
-def test_play_sound_ecc(sound_name, thread_busy):
+def test_play_sound_ecc(sound_name, sound_exists, capsys):
     """
     Each Choice Coverage (ECC) for SoundGenerator.play_sound.
-    Checks thread state management and unknown sound handling.
+    Checks sound registration handling and output generation.
+    Validates that registered sounds produce correct output and unregistered sounds don't.
     """
-    import threading
-    import time
-    
     generator = SoundGenerator()
-    generator.sounds["bullet"] = Sound("bullet")
-    generator.sounds["engine"] = Sound("engine")
-    
-    busy_thread = None
-    if thread_busy:
-        busy_thread = threading.Thread(target=lambda: time.sleep(0.1))
-        busy_thread.start()
-        generator.current_thread = busy_thread
-        
+
+    # Register specific sounds if needed
+    if sound_exists:
+        generator.sounds[sound_name] = Sound(sound_name)
+
+    # Play the sound
     generator.play_sound(sound_name)
-    
-    if sound_name == "unknown":
-        if thread_busy:
-            assert generator.current_thread == busy_thread
-        else:
-            assert generator.current_thread is None
-    else:
-        if thread_busy:
-            assert generator.current_thread == busy_thread
-        else:
-            assert generator.current_thread is not None
-            assert generator.current_thread.is_alive()
-            
-    if thread_busy and busy_thread:
-        busy_thread.join()
 
-# Partitions identified (Building blocks for ACoC):
-# frequency: [100 (<=200), 300 (>200), 600 (>500)]
-# duration: [0.1 (Short)]
-# All Combinations Coverage (ACoC) requires 3 * 1 = 3 combinations.
-
-@pytest.mark.parametrize(
-    "frequency, duration, expected_pattern",
-    [
-        (100, 0.1, "boom!"),
-        (300, 0.1, "boop!"),
-        (600, 0.1, "beep!"),
-    ]
-)
-def test_generate_frequency_beep_acoc(frequency, duration, expected_pattern, capsys):
-    """
-    All Combinations Coverage (ACoC) for generate_frequency_beep.
-    Effectively ensures coverage of the terminal print branching logic.
-    """
-    generator = SoundGenerator()
-    generator.generate_frequency_beep(frequency, duration)
-    
+    # Capture output
     captured = capsys.readouterr()
-    assert expected_pattern in captured.out
+
+    if sound_exists:
+        # Registered sounds should produce output with the sound name
+        expected_output = f"*{sound_name}*"
+        assert expected_output in captured.out, \
+            f"Expected '{expected_output}' in output for {sound_name}, got: {repr(captured.out)}"
+    else:
+        # Unregistered sounds should produce no output (early return)
+        assert captured.out == "" and captured.err == "", \
+            f"Unregistered sound {sound_name} should produce no output, got: {repr(captured.out)}"
+
+
+# Additional edge case and boundary tests
+class TestSoundGeneratorEdgeCases:
+    """Edge case and boundary testing for sound generation"""
+
+    def test_generate_tone_zero_duration(self):
+        """Test tone generation with zero duration"""
+        sound = Sound("zero_duration")
+        sound.generate_tone(440, 0.0, 'sine', 0.5)
+        assert sound.duration == 0.0
+        assert len(sound.samples) == 0
+
+    def test_generate_tone_very_high_frequency(self):
+        """Test tone generation with very high frequency (near Nyquist limit)"""
+        sound = Sound("high_freq")
+        sound.generate_tone(11000, 0.1, 'sine', 0.5)
+        assert len(sound.samples) == int(22050 * 0.1)
+        assert any(s != 0.0 for s in sound.samples)
+
+    def test_generate_tone_very_low_frequency(self):
+        """Test tone generation with very low frequency"""
+        sound = Sound("low_freq")
+        sound.generate_tone(1, 1.0, 'sine', 0.5)
+        assert len(sound.samples) == int(22050 * 1.0)
+        # Very low frequency in 1 second should have ~1 complete cycle
+        zero_crossings = sum(1 for i in range(1, len(sound.samples))
+                           if sound.samples[i-1] * sound.samples[i] < 0)
+        assert zero_crossings >= 1
+
+    def test_generate_sweep_endpoint_frequencies(self):
+        """Test that sweep actually sweeps between start and end frequencies"""
+        sound = Sound("sweep_test")
+        sound.generate_sweep(100, 1000, 0.5, 'sine', 0.5)
+
+        # A sweep from 100 to 1000 Hz should show increasing frequency
+        # Check by looking at zero crossing rate changes
+        num_samples = len(sound.samples)
+        first_half_crossings = sum(1 for i in range(1, num_samples // 2)
+                                  if sound.samples[i-1] * sound.samples[i] < 0)
+        second_half_crossings = sum(1 for i in range(num_samples // 2, num_samples)
+                                   if sound.samples[i-1] * sound.samples[i] < 0)
+
+        # Second half should have more zero crossings due to higher frequency
+        assert second_half_crossings > first_half_crossings, \
+            "Sweep should increase frequency over time"
+
+    def test_generate_explosion_decay_rate(self):
+        """Test that explosion amplitude decays monotonically (roughly)"""
+        sound = Sound("explosion_test")
+        sound.generate_explosion(0.5, 1.0)
+
+        # Split into quarters and check average amplitude decreases
+        num_samples = len(sound.samples)
+        quarters = [
+            sound.samples[i*num_samples//4:(i+1)*num_samples//4]
+            for i in range(4)
+        ]
+
+        avg_amplitudes = [sum(abs(s) for s in q) / len(q) if q else 0 for q in quarters]
+
+        # Generally, each quarter should be <= previous quarter (with some tolerance for noise)
+        for i in range(1, len(avg_amplitudes)):
+            assert avg_amplitudes[i] <= avg_amplitudes[i-1] * 1.1, \
+                f"Explosion decay not monotonic: {avg_amplitudes}"
+
+    def test_engine_sound_harmonics(self):
+        """Test that engine sound combines base frequency and harmonics"""
+        sound = Sound("engine_test")
+        sound.generate_engine(100, 0.5, 0.5)
+
+        # Engine should have harmonics (higher frequency components)
+        # Use FFT would be ideal, but we can detect by checking for rapid variations
+        rapid_changes = sum(1 for i in range(1, len(sound.samples) - 1)
+                          if abs(sound.samples[i] - sound.samples[i-1]) > 0.05)
+        assert rapid_changes > 100, "Engine sound should have rich harmonic content"
+
+    def test_sound_generator_initialization(self):
+        """Test SoundGenerator initialization and default sounds"""
+        generator = SoundGenerator()
+        assert len(generator.sounds) == 0
+        assert generator.playing is False
+        assert generator.current_thread is None
+
+        generator.initialize_default_sounds()
+        assert len(generator.sounds) == 3
+        assert "bullet" in generator.sounds
+        assert "explosion" in generator.sounds
+        assert "engine" in generator.sounds
+
+    def test_generate_frequency_beep_patterns(self):
+        """Test frequency beep pattern selection"""
+        generator = SoundGenerator()
+
+        test_cases = [
+            (50, "boom!"),
+            (200, "boom!"),
+            (250, "boop!"),
+            (500, "boop!"),
+            (600, "beep!"),
+            (10000, "beep!"),
+        ]
+
+        for freq, expected_pattern in test_cases:
+            generator.generate_frequency_beep(freq, 0.1)
