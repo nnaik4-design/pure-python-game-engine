@@ -542,3 +542,58 @@ class TestSpriteErrorGuessing:
         assert s1.color != s2.color
         assert s1.game_object is obj1
         assert s2.game_object is obj2
+
+
+
+
+
+class TestSpriteAnimationStateMachine:
+    """Test animation state transitions and playback control"""
+
+    def test_animation_play_stop_pause(self):
+        """Test play, stop, and pause state transitions"""
+        anim = SpriteAnimation("test", [0, 1, 2], frame_duration=0.1, loop=True)
+
+        # Initial state
+        assert anim.is_playing is False
+        assert anim.current_frame == 0
+        assert anim.frame_timer == 0.0
+
+        # Play
+        anim.play()
+        assert anim.is_playing is True
+
+        # Update and verify frame advances
+        frame_before = anim.current_frame
+        anim.update(0.15)
+        assert anim.current_frame > frame_before
+
+        # Pause (stop)
+        anim.pause()
+        assert anim.is_playing is False
+
+        # Stop (resets)
+        anim.stop()
+        assert anim.is_playing is False
+        assert anim.current_frame == 0
+        assert anim.frame_timer == 0.0
+
+    def test_animation_looping_behavior(self):
+        """Test looping vs non-looping animations"""
+        # Non-looping animation
+        anim_no_loop = SpriteAnimation("no_loop", [0, 1], frame_duration=0.1, loop=False)
+        anim_no_loop.play()
+
+        # Update through all frames and beyond
+        anim_no_loop.update(0.25)
+        assert anim_no_loop.current_frame == 1  # Stays at last frame
+        assert anim_no_loop.is_playing is False  # Stops playing
+
+        # Looping animation
+        anim_loop = SpriteAnimation("loop", [0, 1], frame_duration=0.1, loop=True)
+        anim_loop.play()
+
+        # Update through all frames and beyond
+        anim_loop.update(0.25)
+        assert anim_loop.current_frame == 0  # Wraps back to start
+        assert anim_loop.is_playing is True  # Continues playing

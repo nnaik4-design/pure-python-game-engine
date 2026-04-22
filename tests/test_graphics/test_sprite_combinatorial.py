@@ -6,6 +6,7 @@ from engine.graphics.sprite import Sprite, SpriteAnimation, SpriteAtlas
 from engine.math.vector2 import Vector2
 from engine.scene.game_object import GameObject
 
+# Bug: SpriteAnimation.update didn't handle frame timer correctly when delta time exceeded frame duration, causing skipped frames and incorrect timing.
 # 1. PWC for SpriteAnimation.update with comprehensive parameters
 # is_playing (True, False), loop (True, False), indices ([], [0, 1]), frame_timer reaching duration (True, False)
 _anim_parameters = [
@@ -94,14 +95,30 @@ def test_sprite_property_clamping_pwc(alpha_in, bright_in, cont_in):
     assert sprite.contrast == max(0.0, min(2.0, cont_in))
     assert 0.0 <= sprite.contrast <= 2.0
 
-
+# sprite.contains_point didn't account for triagle shape, it uses and else clause that treats all non-circle shapes as rectangles.
 # 3. PWC for contains_point with multiple test points
 # shape ('circle', 'rectangle', 'triangle'), point_position (multiple), scale (1.0, 2.0)
 _contains_parameters = [
-    ['circle', 'rectangle'],  # shape
+    ['circle', 'rectangle', 'triangle'],  # shape
     [0.5, 1.5],  # scale
 ]
 _contains_pwc_cases = [tuple(case) for case in AllPairs(_contains_parameters)]
+
+def _point_in_triangle(point, v1, v2, v3):
+    """Check if a point is inside a triangle using barycentric coordinates"""
+    def sign(p1, p2, p3):
+        return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+
+    d1 = sign(point, v1, v2)
+    d2 = sign(point, v2, v3)
+    d3 = sign(point, v3, v1)
+
+    has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+    has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+
+    return not (has_neg and has_pos)
+
+
 
 @pytest.mark.parametrize("shape, scale", _contains_pwc_cases)
 def test_sprite_contains_point_pwc(shape, scale):
@@ -133,6 +150,14 @@ def test_sprite_contains_point_pwc(shape, scale):
             half_w = actual_size.x / 2
             half_h = actual_size.y / 2
             expected = (-half_w <= point.x <= half_w and -half_h <= point.y <= half_h)
+        elif shape == 'triangle':
+            # Triangle vertices at world position (0, 0)
+            half_w = actual_size.x / 2
+            half_h = actual_size.y / 2
+            v1 = Vector2(0, -half_h)       # Top
+            v2 = Vector2(-half_w, half_h)  # Bottom left
+            v3 = Vector2(half_w, half_h)   # Bottom right
+            expected = _point_in_triangle(point, v1, v2, v3)
 
         assert result == expected, f"{shape} - {description}: point {point}, expected {expected}, got {result}"
 
@@ -183,8 +208,8 @@ def test_sprite_render_pwc(visible, has_game_object, shape, has_outline):
             assert circle_pos.y == 100
             assert radius > 0
             if has_outline:
-                assert kwargs['outline'] == "#00FF00"
-                assert kwargs['width'] == 2
+                assert args[3] == "#00FF00"  # outline_color
+                assert args[4] == 2  # outline_width
 
         elif shape == 'triangle':
             renderer.draw_polygon.assert_called_once()
@@ -196,6 +221,9 @@ def test_sprite_render_pwc(visible, has_game_object, shape, has_outline):
             center_y = sum(p.y for p in points) / 3
             assert abs(center_x - 100) < 1e-4
             assert abs(center_y - 100) < 1e-4
+            if has_outline:
+                assert args[2] == "#00FF00"  # outline_color
+                assert args[3] == 2  # outline_width
 
         else:  # rectangle
             renderer.draw_rectangle.assert_called_once()
@@ -208,63 +236,10 @@ def test_sprite_render_pwc(visible, has_game_object, shape, has_outline):
             assert rect_size.y == 50
             # Verify outline is passed when set
             if has_outline:
-                assert kwargs['outline'] == "#00FF00"
+                assert args[4] == "#00FF00"  # outline_color
+                assert args[5] == 2  # outline_width
 
-
-# 5. SpriteAnimation state management tests
-class TestSpriteAnimationStateMachine:
-    """Test animation state transitions and playback control"""
-
-    def test_animation_play_stop_pause(self):
-        """Test play, stop, and pause state transitions"""
-        anim = SpriteAnimation("test", [0, 1, 2], frame_duration=0.1, loop=True)
-
-        # Initial state
-        assert anim.is_playing is False
-        assert anim.current_frame == 0
-        assert anim.frame_timer == 0.0
-
-        # Play
-        anim.play()
-        assert anim.is_playing is True
-
-        # Update and verify frame advances
-        frame_before = anim.current_frame
-        anim.update(0.15)
-        assert anim.current_frame > frame_before
-
-        # Pause (stop)
-        anim.pause()
-        assert anim.is_playing is False
-
-        # Stop (resets)
-        anim.stop()
-        assert anim.is_playing is False
-        assert anim.current_frame == 0
-        assert anim.frame_timer == 0.0
-
-    def test_animation_looping_behavior(self):
-        """Test looping vs non-looping animations"""
-        # Non-looping animation
-        anim_no_loop = SpriteAnimation("no_loop", [0, 1], frame_duration=0.1, loop=False)
-        anim_no_loop.play()
-
-        # Update through all frames and beyond
-        anim_no_loop.update(0.25)
-        assert anim_no_loop.current_frame == 1  # Stays at last frame
-        assert anim_no_loop.is_playing is False  # Stops playing
-
-        # Looping animation
-        anim_loop = SpriteAnimation("loop", [0, 1], frame_duration=0.1, loop=True)
-        anim_loop.play()
-
-        # Update through all frames and beyond
-        anim_loop.update(0.25)
-        assert anim_loop.current_frame == 0  # Wraps back to start
-        assert anim_loop.is_playing is True  # Continues playing
-
-
-# 6. SpriteAtlas functionality
+# 5. SpriteAtlas functionality
 class TestSpriteAtlas:
     """Test sprite atlas management"""
 
@@ -298,7 +273,7 @@ class TestSpriteAtlas:
             assert abs(data['position'].x - expected_x) < 1e-6
 
 
-# 7. Sprite color and shader effects
+# 6. Sprite color and shader effects
 class TestSpriteShaderEffects:
     """Test sprite visual effects"""
 

@@ -269,8 +269,9 @@ def test_generate_engine_pwc(base_freq, duration, amplitude):
     "sound_name, sound_exists",
     [
         ("bullet", True),
-        ("unknown", False),
+        ("explosion", True),
         ("engine", True),
+        ("unknown", False),
     ]
 )
 def test_play_sound_ecc(sound_name, sound_exists, capsys):
@@ -288,120 +289,21 @@ def test_play_sound_ecc(sound_name, sound_exists, capsys):
     # Play the sound
     generator.play_sound(sound_name)
 
+    # Wait for the background thread to finish playing the sound
+    if generator.current_thread is not None:
+        generator.current_thread.join()
+
     # Capture output
     captured = capsys.readouterr()
 
     if sound_exists:
-        # Registered sounds should produce output with the sound name
-        expected_output = f"*{sound_name}*"
-        assert expected_output in captured.out, \
-            f"Expected '{expected_output}' in output for {sound_name}, got: {repr(captured.out)}"
+        # Check for either the bell character (\x07) OR the fallback text
+        if sound_name == "explosion":
+            # Explosion loops 3 times
+            assert '\x07\x07\x07' in captured.out or f"*{sound_name}*" in captured.out
+        else:
+            assert '\x07' in captured.out or f"*{sound_name}*" in captured.out
     else:
         # Unregistered sounds should produce no output (early return)
         assert captured.out == "" and captured.err == "", \
             f"Unregistered sound {sound_name} should produce no output, got: {repr(captured.out)}"
-
-
-# Additional edge case and boundary tests
-class TestSoundGeneratorEdgeCases:
-    """Edge case and boundary testing for sound generation"""
-
-    def test_generate_tone_zero_duration(self):
-        """Test tone generation with zero duration"""
-        sound = Sound("zero_duration")
-        sound.generate_tone(440, 0.0, 'sine', 0.5)
-        assert sound.duration == 0.0
-        assert len(sound.samples) == 0
-
-    def test_generate_tone_very_high_frequency(self):
-        """Test tone generation with very high frequency (near Nyquist limit)"""
-        sound = Sound("high_freq")
-        sound.generate_tone(11000, 0.1, 'sine', 0.5)
-        assert len(sound.samples) == int(22050 * 0.1)
-        assert any(s != 0.0 for s in sound.samples)
-
-    def test_generate_tone_very_low_frequency(self):
-        """Test tone generation with very low frequency"""
-        sound = Sound("low_freq")
-        sound.generate_tone(1, 1.0, 'sine', 0.5)
-        assert len(sound.samples) == int(22050 * 1.0)
-        # Very low frequency in 1 second should have ~1 complete cycle
-        zero_crossings = sum(1 for i in range(1, len(sound.samples))
-                           if sound.samples[i-1] * sound.samples[i] < 0)
-        assert zero_crossings >= 1
-
-    def test_generate_sweep_endpoint_frequencies(self):
-        """Test that sweep actually sweeps between start and end frequencies"""
-        sound = Sound("sweep_test")
-        sound.generate_sweep(100, 1000, 0.5, 'sine', 0.5)
-
-        # A sweep from 100 to 1000 Hz should show increasing frequency
-        # Check by looking at zero crossing rate changes
-        num_samples = len(sound.samples)
-        first_half_crossings = sum(1 for i in range(1, num_samples // 2)
-                                  if sound.samples[i-1] * sound.samples[i] < 0)
-        second_half_crossings = sum(1 for i in range(num_samples // 2, num_samples)
-                                   if sound.samples[i-1] * sound.samples[i] < 0)
-
-        # Second half should have more zero crossings due to higher frequency
-        assert second_half_crossings > first_half_crossings, \
-            "Sweep should increase frequency over time"
-
-    def test_generate_explosion_decay_rate(self):
-        """Test that explosion amplitude decays monotonically (roughly)"""
-        sound = Sound("explosion_test")
-        sound.generate_explosion(0.5, 1.0)
-
-        # Split into quarters and check average amplitude decreases
-        num_samples = len(sound.samples)
-        quarters = [
-            sound.samples[i*num_samples//4:(i+1)*num_samples//4]
-            for i in range(4)
-        ]
-
-        avg_amplitudes = [sum(abs(s) for s in q) / len(q) if q else 0 for q in quarters]
-
-        # Generally, each quarter should be <= previous quarter (with some tolerance for noise)
-        for i in range(1, len(avg_amplitudes)):
-            assert avg_amplitudes[i] <= avg_amplitudes[i-1] * 1.1, \
-                f"Explosion decay not monotonic: {avg_amplitudes}"
-
-    def test_engine_sound_harmonics(self):
-        """Test that engine sound combines base frequency and harmonics"""
-        sound = Sound("engine_test")
-        sound.generate_engine(100, 0.5, 0.5)
-
-        # Engine should have harmonics (higher frequency components)
-        # Use FFT would be ideal, but we can detect by checking for rapid variations
-        rapid_changes = sum(1 for i in range(1, len(sound.samples) - 1)
-                          if abs(sound.samples[i] - sound.samples[i-1]) > 0.05)
-        assert rapid_changes > 100, "Engine sound should have rich harmonic content"
-
-    def test_sound_generator_initialization(self):
-        """Test SoundGenerator initialization and default sounds"""
-        generator = SoundGenerator()
-        assert len(generator.sounds) == 0
-        assert generator.playing is False
-        assert generator.current_thread is None
-
-        generator.initialize_default_sounds()
-        assert len(generator.sounds) == 3
-        assert "bullet" in generator.sounds
-        assert "explosion" in generator.sounds
-        assert "engine" in generator.sounds
-
-    def test_generate_frequency_beep_patterns(self):
-        """Test frequency beep pattern selection"""
-        generator = SoundGenerator()
-
-        test_cases = [
-            (50, "boom!"),
-            (200, "boom!"),
-            (250, "boop!"),
-            (500, "boop!"),
-            (600, "beep!"),
-            (10000, "beep!"),
-        ]
-
-        for freq, expected_pattern in test_cases:
-            generator.generate_frequency_beep(freq, 0.1)

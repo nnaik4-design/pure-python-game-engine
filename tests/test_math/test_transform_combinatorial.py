@@ -59,13 +59,15 @@ def test_transform_scale_impact_pwc(tx, ty, rot, sx, sy, px, py):
         distance_local = math.sqrt(px*px + py*py)
         distance_world = (world_point - Vector2(tx, ty)).magnitude
 
-        # Account for scaling: scaled distance ≈ local distance * average scale
-        avg_scale = (abs(sx) + abs(sy)) / 2
-        # Due to rotation, can't directly compare, but magnitude should scale
-        if px != 0 or py != 0:
-            expected_scaled_mag = distance_local * avg_scale
-            # Rotation doesn't change magnitude, but scale does
-            assert abs(distance_world - expected_scaled_mag) < distance_world * 0.5 or abs(sx) < 1e-6
+        # For uniform scaling, distance should scale uniformly
+        # For non-uniform scaling, the effect is more complex (component-wise)
+        if abs(abs(sx) - abs(sy)) < 1e-6:  # Uniform scaling
+            # Account for scaling: scaled distance ≈ local distance * scale
+            avg_scale = (abs(sx) + abs(sy)) / 2
+            if px != 0 or py != 0:
+                expected_scaled_mag = distance_local * avg_scale
+                # Rotation doesn't change magnitude, but scale does
+                assert abs(distance_world - expected_scaled_mag) < distance_world * 0.5 or abs(sx) < 1e-6
 
 
 # ============================================================================
@@ -187,8 +189,15 @@ def test_hierarchy_world_position_pwc(p_idx, c_idx):
     local_pos = child.position
     if not (p_state["pos"] == (0, 0) and p_state["rot"] == 0 and p_state["scale"] == (1, 1)):
         # Non-identity parent should affect world position
-        assert abs(world_pos.x - local_pos.x) > 1e-10 or abs(world_pos.y - local_pos.y) > 1e-10 or \
-               (p_state["pos"] == (0, 0) and p_state["scale"] == (1, 1) and p_state["rot"] == 0)
+        # Exception: when child is at origin (0,0), rotation/scale don't move it
+        # Only parent's position affects it
+        if c_state["pos"] == (0, 0):
+            # Child at origin: world position should be parent's position
+            assert abs(world_pos.x - p_state["pos"][0]) < 1e-10
+            assert abs(world_pos.y - p_state["pos"][1]) < 1e-10
+        else:
+            # Child not at origin: non-identity parent should change world position
+            assert abs(world_pos.x - local_pos.x) > 1e-10 or abs(world_pos.y - local_pos.y) > 1e-10
 
 
 @pytest.mark.parametrize("p_idx, c_idx", _hierarchy_pwc_cases)

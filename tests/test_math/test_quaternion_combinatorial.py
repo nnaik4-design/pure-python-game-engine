@@ -245,8 +245,13 @@ def test_quaternion_axis_angle_conversion_pwc(axis, angle):
     # Convert back to axis-angle
     result_axis, result_angle = q.to_axis_angle()
 
-    # Verify magnitude of axis is 1 (normalized)
-    assert abs(result_axis.magnitude - 1.0) < 1e-5
+    # Verify magnitude of axis is 1 (normalized), or 0 for zero rotation
+    if abs(result_angle) > 1e-5:
+        # Non-zero rotation: axis should be normalized
+        assert abs(result_axis.magnitude - 1.0) < 1e-5
+    else:
+        # Zero rotation: axis is undefined, should be zero vector
+        assert result_axis.magnitude < 1e-5
 
     # Angle should be in [0, 2π]
     assert 0 <= result_angle <= 2 * math.pi + 1e-5
