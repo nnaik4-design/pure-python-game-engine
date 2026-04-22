@@ -1,13 +1,14 @@
-"""GUI tests for Breakout game using Path B (graybox integration).
+"""Integration tests for Breakout game using graybox approach.
 
-Tests validate that keyboard input flows through the engine correctly and
-produces expected game state changes. Uses two approaches:
+Tests validate that game engine components work together correctly:
+- Input handling flows through the engine and produces state changes
+- Physics and collision detection work as expected
+- Game state transitions occur properly
 
-1. TestBreakoutInputHandling: Uses threading with event_generate() to inject
-   actual tkinter events into the GUI, testing the OS-level input layer.
-
-2. TestBreakoutCollisions & TestBreakoutGameState: Use synchronous, non-threaded
-   fixtures to test physics and game logic without race conditions.
+Three test classes validate the full integration:
+1. TestBreakoutInputHandling: Input manager → paddle movement (7 tests)
+2. TestBreakoutCollisions: Physics and collision detection (9 tests)
+3. TestBreakoutGameState: Scoring, lives, state transitions (6 tests)
 """
 
 import pytest
@@ -16,51 +17,19 @@ import time
 from breakout_game import BreakoutGame
 from engine.math.vector2 import Vector2
 
-
-@pytest.fixture
-def breakout_game_threaded():
-    """Fixture: Launch BreakoutGame in thread for GUI integration tests.
-
-    This fixture:
-    - Creates a BreakoutGame instance
-    - Launches it in a separate daemon thread
-    - Waits for window initialization
-    - Yields the game object for testing
-    - Cleans up the game window and joins the thread
-
-    Use this for TestBreakoutInputHandling to test tkinter event injection.
-    """
-    game = BreakoutGame()
-    game_thread = threading.Thread(target=game.run)
-    game_thread.daemon = True
-    game_thread.start()
-    time.sleep(0.3)  # Wait for window initialization
-
-    yield game
-
-    # Cleanup
-    if game_thread.is_alive():
-        try:
-            game.window.root.quit()
-        except Exception:
-            pass
-        game_thread.join(timeout=2)
-
-
 @pytest.fixture
 def breakout_game_sync():
-    """Fixture: Create a non-threaded BreakoutGame instance for synchronous tests.
+    """Fixture: Create a non-threaded BreakoutGame instance for deterministic tests.
 
     This fixture:
     - Creates a BreakoutGame instance without running the game loop
-    - Initializes the game to set up game objects
-    - Provides a clean, deterministic environment for physics/logic tests
+    - Initializes the game to set up all game objects
+    - Provides a clean, deterministic environment for integration tests
     - Avoids race conditions from background thread updates
     - Yields the game object for testing
     - Cleans up the window gracefully
 
-    Use this for TestBreakoutCollisions and TestBreakoutGameState to test
-    physics and game state changes without thread race conditions.
+    Used by all three test classes to validate engine component integration.
     """
     game = BreakoutGame()
     # Initialize the game to set up all game objects (ball, paddle, bricks, etc.)
@@ -78,10 +47,13 @@ def breakout_game_sync():
 
 
 class TestBreakoutInputHandling:
-    """Tests for paddle control via keyboard input (7 tests).
+    """Integration tests for input handling (7 tests).
 
-    Uses synchronous testing with direct input manager simulation to avoid race
-    conditions and timing issues from threaded event injection.
+    Validates that input manager → paddle movement works end-to-end:
+    - Keyboard input is captured by the input manager
+    - Game update processes the input
+    - Paddle moves and respects boundaries
+    - State changes accumulate over multiple frames
     """
 
     def test_paddle_moves_left_on_arrow_key(self, breakout_game_sync):
