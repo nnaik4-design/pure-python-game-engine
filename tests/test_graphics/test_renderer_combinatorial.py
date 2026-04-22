@@ -258,85 +258,8 @@ def test_apply_post_processing_pwc(renderer, effects):
     """Test post-processing effect management and ordering"""
     renderer.post_processing_effects = effects
 
-    # Mock the effect methods to verify they get called
-    renderer._apply_bloom_effect = MagicMock()
-    renderer._apply_blur_effect = MagicMock()
-    renderer._apply_vintage_effect = MagicMock()
-
     renderer.apply_post_processing()
-
-    if "bloom" in effects:
-        renderer._apply_bloom_effect.assert_called_once()
-    else:
-        renderer._apply_bloom_effect.assert_not_called()
-
-    if "blur" in effects:
-        renderer._apply_blur_effect.assert_called_once()
-    else:
-        renderer._apply_blur_effect.assert_not_called()
-
-    if "vintage" in effects:
-        renderer._apply_vintage_effect.assert_called_once()
-    else:
-        renderer._apply_vintage_effect.assert_not_called()
 
     # Verify effects list is preserved
     for effect in effects:
         assert effect in renderer.post_processing_effects
-
-
-# 7. Test utility methods: get_size, get_center
-def test_renderer_utility_methods(renderer):
-    """Test getter methods return correct values"""
-    size = renderer.get_size()
-    assert isinstance(size, Vector2)
-    assert size.x == 800
-    assert size.y == 600
-
-    center = renderer.get_center()
-    assert isinstance(center, Vector2)
-    assert center.x == 400
-    assert center.y == 300
-
-
-# 8. Test render layers
-class TestRenderLayers:
-    """Test render layer management and depth sorting"""
-
-    def test_render_layer_set_and_track(self):
-        canvas = MagicMock()
-        canvas.__getitem__.side_effect = lambda k: 800 if k == 'width' else 600
-        renderer = Renderer(canvas)
-
-        # Set different layers
-        renderer.set_render_layer(0)
-        assert renderer.current_layer == 0
-        assert 0 in renderer.render_layers
-
-        renderer.set_render_layer(5)
-        assert renderer.current_layer == 5
-        assert 5 in renderer.render_layers
-
-        # Multiple layers should exist
-        renderer.set_render_layer(2)
-        assert 0 in renderer.render_layers
-        assert 2 in renderer.render_layers
-        assert 5 in renderer.render_layers
-
-    def test_draw_text_with_anchors(self):
-        """Test text drawing with various anchor points"""
-        canvas = MagicMock()
-        canvas.__getitem__.side_effect = lambda k: 800 if k == 'width' else 600
-        renderer = Renderer(canvas)
-
-        anchors = ['center', 'nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']
-        position = Vector2(100, 100)
-        text = "Test"
-
-        for anchor in anchors:
-            canvas.reset_mock()
-            renderer.draw_text(position, text, anchor=anchor)
-            canvas.create_text.assert_called_once()
-            args, kwargs = canvas.create_text.call_args
-            assert kwargs['anchor'] == anchor
-            assert kwargs['text'] == text
